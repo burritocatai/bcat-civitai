@@ -1,0 +1,39 @@
+# Binaries for programs and examples
+/debug/
+/target/
+
+# If you use `cargo test`, you may also want to ignore the test build directory
+/tests/target/
+
+# Cargo package manager metadata
+/.crates.toml
+/.crates2.json
+
+# Output of cargo install
+/.cargo-install.log
+
+# If generated, Cargo.lock should also be ignored for libraries (but not for applications)
+/Cargo.lock
+
+# Backup and temporary files by editors
+*~
+# VSCode
+.vscode/
+*.code-workspace
+# Intellij
+.idea/
+*.iml
+# JetBrains Rust toolchains
+.rs/target/
+.rs/mirror/
+
+# macOS
+.DS_Store
+*.swp
+
+# Saved sessions and logs
+cargo-debug.log
+target-doc/
+
+# Optional: Ignore sensitive files (if manually added)
+.env
