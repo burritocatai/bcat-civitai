@@ -2,8 +2,9 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
-use std::io::copy;
+use std::io::{copy, Write};
 use structopt::StructOpt;
+use indicatif::{ProgressBar,ProgressStyle};
 
 #[derive(StructOpt)]
 struct Cli {
@@ -104,8 +105,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let file_name = &file.name;
+
+    let total_size = response
+        .content_length()
+        .ok_or("Failed to fetch content length")?;
+
+
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap().progress_chars("=>-"),
+    );
+
+
     let mut downloaded_file = File::create(file_name)?;
-    copy(&mut response.bytes().await?.as_ref(), &mut downloaded_file)?;
+    let mut downloaded_data = 0u64;
+
+    while let Some(chunk) = response.chunk().await? {
+        downloaded_file.write_all(&chunk)?;
+        downloaded_data += chunk.len() as u64;
+        pb.set_position(downloaded_data);
+    }
+
+    pb.finish_with_message("Download complete!");
+
 
     println!("Model downloaded as: {}", file_name);
 
