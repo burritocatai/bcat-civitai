@@ -18,7 +18,6 @@ struct Cli {
 #[derive(Deserialize)]
 struct ModelVersion {
     id: u64,
-    sha256: String,
     files: Vec<ModelFile>,
 }
 
@@ -26,6 +25,12 @@ struct ModelVersion {
 struct ModelFile {
     name: String,
     downloadUrl: String,
+    hashes: ModelHashes,
+}
+
+#[derive(Deserialize)]
+struct ModelHashes {
+    SHA256: String,
 }
 
 #[derive(Deserialize)]
@@ -75,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .find(|v| v.id == version_id)
         .ok_or("Version not found")?;
 
-    println!("Found version with SHA256: {}", version.sha256);
+    // println!("Found version with SHA256: {}", version.sha256);
 
     // Get the download URL from files
     if version.files.is_empty() {

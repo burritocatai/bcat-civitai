@@ -37,3 +37,6 @@ target-doc/
 
 # Optional: Ignore sensitive files (if manually added)
 .env
+
+# test downloads
+*.safetensors
