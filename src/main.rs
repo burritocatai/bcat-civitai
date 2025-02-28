@@ -53,11 +53,31 @@ struct Model {
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::from_args();
 
+    let client = reqwest::Client::new();
+    let urn = args.urn.as_str();
+    let token = args.token.as_str();
+
     // Parse the provided URN
-    let urn_parts: Vec<&str> = args.urn.split(':').collect();
-    if urn_parts.len() != 6 || !args.urn.contains('@') {
-        eprintln!("Invalid URN format");
+    let version: ModelVersion = download_model_info(urn).await?;
+    // Get the download URL from files
+    if version.files.is_empty() {
+        eprintln!("No files available for download");
         return Ok(());
+    }
+
+    let file = &version.files[0];
+    let download_url = &file.downloadUrl;
+
+    download_file(download_url, token, urn, &file.name).await?;
+
+    Ok(())
+}
+
+async fn download_model_info(urn: &str) -> Result<ModelVersion, Box<dyn Error>> {
+    // Parse the provided URN
+    let urn_parts: Vec<&str> = urn.split(':').collect();
+    if urn_parts.len() != 6 || !urn.contains('@') {
+        return Err("Invalid URN format".into());
     }
     let model_type = urn_parts[2];
     let model_id_with_version: Vec<&str> = urn_parts[5].split('@').collect();
@@ -77,8 +97,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let response = client.get(&model_url).send().await?;
 
     if !response.status().is_success() {
-        eprintln!("Failed to fetch model metadata: {}", response.status());
-        return Ok(());
+        return Err(format!("Failed to fetch model metadata: {}", response.status()).into());
     }
 
     let model: Model = response.json().await?;
@@ -90,21 +109,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .find(|v| v.id == version_id)
         .ok_or("Version not found")?;
 
-    // println!("Found version with SHA256: {}", version.sha256);
+    Ok(version)
+}
 
-    // Get the download URL from files
-    if version.files.is_empty() {
-        eprintln!("No files available for download");
-        return Ok(());
-    }
-    let file = &version.files[0];
-    let download_url = &file.downloadUrl;
+async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &str) -> Result<(), Box<dyn Error>> {
 
     println!("Downloading file from: {}", download_url);
+    let client = reqwest::Client::new();
 
     // Download the file
     let mut headers = HeaderMap::new();
-    let token_value = format!("Bearer {}", args.token);
+    let token_value = format!("Bearer {}", token);
     headers.insert(AUTHORIZATION, HeaderValue::from_str(&token_value)?);
 
     let mut response = client.get(download_url).headers(headers).send().await?;
@@ -113,7 +128,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let file_name = &file.name;
 
     let total_size = response
         .content_length()
@@ -140,7 +154,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     pb.finish_with_message("Download complete!");
 
     let metadata = Metadata {
-        urn: args.urn.clone(),
+        urn: urn.parse().unwrap(),
         datetime: Utc::now().to_rfc3339(), // Get ISO8601 string as timestamp
     };
 
@@ -152,9 +166,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     std::fs::write(&metadata_file_name, metadata_json)?;
 
     println!("Metadata saved as: {}", metadata_file_name);
-
-
     println!("Model downloaded as: {}", file_name);
 
-    Ok(())
+    return Ok(());
 }
