@@ -40,3 +40,4 @@ target-doc/
 
 # test downloads
 *.safetensors
+*.metadata.json
