@@ -1,10 +1,19 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::error::Error;
 use std::fs::File;
 use std::io::{copy, Write};
 use structopt::StructOpt;
 use indicatif::{ProgressBar,ProgressStyle};
+use chrono::Utc;
+
+
+#[derive(Serialize)]
+struct Metadata {
+    urn: String,
+    datetime: String,
+}
 
 #[derive(StructOpt)]
 struct Cli {
@@ -129,6 +138,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     pb.finish_with_message("Download complete!");
+
+    let metadata = Metadata {
+        urn: args.urn.clone(),
+        datetime: Utc::now().to_rfc3339(), // Get ISO8601 string as timestamp
+    };
+
+    let metadata_json = serde_json::to_string_pretty(&metadata)?;
+
+    // Create metadata file name
+    let metadata_file_name = format!("{}.metadata.json", file_name);
+
+    std::fs::write(&metadata_file_name, metadata_json)?;
+
+    println!("Metadata saved as: {}", metadata_file_name);
 
 
     println!("Model downloaded as: {}", file_name);
