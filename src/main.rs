@@ -2,14 +2,17 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::error::Error;
+use std::{fs, path};
 use std::fs::File;
 use std::io::{copy, Write};
 use structopt::StructOpt;
 use indicatif::{ProgressBar,ProgressStyle};
 use chrono::Utc;
+use std::io::{self, Read, BufReader};
+use sha2::{Sha256, Digest};
 
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Metadata {
     urn: String,
     datetime: String,
@@ -18,11 +21,16 @@ struct Metadata {
 #[derive(StructOpt)]
 struct Cli {
     /// The URN to the model
-    urn: String,
+    #[structopt(short, long)]
+    urn: Option<String>,
 
     /// The Bearer token for authentication
     #[structopt(short, long)]
     token: String,
+
+    #[structopt(long, parse(from_os_str))]
+    update: Option<std::path::PathBuf>,
+
 }
 
 #[derive(Deserialize)]
@@ -53,11 +61,112 @@ struct Model {
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::from_args();
 
-    // Parse the provided URN
-    let urn_parts: Vec<&str> = args.urn.split(':').collect();
-    if urn_parts.len() != 6 || !args.urn.contains('@') {
-        eprintln!("Invalid URN format");
+    // Token is always required
+    let token = args.token.as_str();
+
+    if let Some(metadata_path) = args.update {
+        println!("Update flag detected. Processing metadata...");
+
+        let metadata: Metadata = read_metadata(&metadata_path)?;
+        println!("Metadata URN: {}", metadata.urn);
+
+        // Fetch model information for the URN from metadata
+        let model_version = download_model_info(&metadata.urn).await?;
+        let target_file = check_and_update_file(&model_version, &metadata, token).await?;
+        println!("File is up-to-date: {:?}", target_file);
         return Ok(());
+    }
+
+    // When not updating, urn is required
+    let urn = match args.urn {
+        Some(urn) => urn,
+        None => {
+            eprintln!("URN is required when not using the update flag");
+            return Err("Missing required URN parameter".into());
+        }
+    };
+
+    // Parse the provided URN
+    let version: ModelVersion = download_model_info(&urn).await?;
+    // Get the download URL from files
+    if version.files.is_empty() {
+        eprintln!("No files available for download");
+        return Ok(());
+    }
+
+    let file = &version.files[0];
+    let download_url = &file.downloadUrl;
+
+    download_file(download_url, token, &urn, &file.name).await?;
+
+    Ok(())
+}
+
+async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, token: &str)
+    -> Result<(), Box<dyn std::error::Error>> {
+    for file in &model_version.files {
+        // Check if the file exists locally and its hash matches
+        let file_path = Path::new(&file.name);
+        if file_path.exists() {
+            let existing_sha256 = calculate_sha256(file_path)?;
+            println!("Existing SHA256: {}", existing_sha256.to_lowercase());
+            println!("File SHA256: {}", file.hashes.SHA256.to_lowercase());
+            if existing_sha256.to_lowercase() == file.hashes.SHA256.to_lowercase() {
+                println!("File {} is up to date.", file.name);
+                continue;
+            } else {
+                println!("File {} has a mismatching hash. Updating...", file.name);
+            }
+        } else {
+            println!("File {} does not exist. Downloading...", file.name);
+        }
+
+        // Download and replace the file if necessary
+        download_file(&file.downloadUrl, token, &metadata.urn, &file.name).await.expect("TODO: panic message");
+    }
+
+    Ok(())
+
+}
+
+fn calculate_sha256(file_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    // Open the file
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+
+    // Create a SHA256 hasher
+    let mut hasher = Sha256::new();
+
+    // Read the file in chunks and update the hasher
+    let mut buffer = [0; 1024]; // 1KB buffer
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    // Get the hash result and convert to hex string
+    let hash = hasher.finalize();
+    let hash_string = format!("{:x}", hash);
+
+    Ok(hash_string)
+}
+
+fn read_metadata(path: &Path) -> Result<Metadata, Box<dyn Error>> {
+    let file_content = fs::read_to_string(path);
+    let metadata: Metadata = serde_json::from_str(&file_content.unwrap().to_string())?;
+    Ok(metadata)
+}
+
+
+
+async fn download_model_info(urn: &str) -> Result<ModelVersion, Box<dyn Error>> {
+    // Parse the provided URN
+    let urn_parts: Vec<&str> = urn.split(':').collect();
+    if urn_parts.len() != 6 || !urn.contains('@') {
+        return Err("Invalid URN format".into());
     }
     let model_type = urn_parts[2];
     let model_id_with_version: Vec<&str> = urn_parts[5].split('@').collect();
@@ -77,8 +186,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let response = client.get(&model_url).send().await?;
 
     if !response.status().is_success() {
-        eprintln!("Failed to fetch model metadata: {}", response.status());
-        return Ok(());
+        return Err(format!("Failed to fetch model metadata: {}", response.status()).into());
     }
 
     let model: Model = response.json().await?;
@@ -90,21 +198,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .find(|v| v.id == version_id)
         .ok_or("Version not found")?;
 
-    // println!("Found version with SHA256: {}", version.sha256);
+    Ok(version)
+}
 
-    // Get the download URL from files
-    if version.files.is_empty() {
-        eprintln!("No files available for download");
-        return Ok(());
-    }
-    let file = &version.files[0];
-    let download_url = &file.downloadUrl;
+async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &str) -> Result<(), Box<dyn Error>> {
 
     println!("Downloading file from: {}", download_url);
+    let client = reqwest::Client::new();
 
     // Download the file
     let mut headers = HeaderMap::new();
-    let token_value = format!("Bearer {}", args.token);
+    let token_value = format!("Bearer {}", token);
     headers.insert(AUTHORIZATION, HeaderValue::from_str(&token_value)?);
 
     let mut response = client.get(download_url).headers(headers).send().await?;
@@ -113,7 +217,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let file_name = &file.name;
 
     let total_size = response
         .content_length()
@@ -140,7 +243,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     pb.finish_with_message("Download complete!");
 
     let metadata = Metadata {
-        urn: args.urn.clone(),
+        urn: urn.parse().unwrap(),
         datetime: Utc::now().to_rfc3339(), // Get ISO8601 string as timestamp
     };
 
@@ -152,9 +255,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     std::fs::write(&metadata_file_name, metadata_json)?;
 
     println!("Metadata saved as: {}", metadata_file_name);
-
-
     println!("Model downloaded as: {}", file_name);
 
-    Ok(())
+    return Ok(());
 }
