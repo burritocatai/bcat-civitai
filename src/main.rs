@@ -2,7 +2,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::error::Error;
-use std::{fs, path};
+use std::{fs, path, env};
 use std::fs::File;
 use std::io::{copy, Write};
 use structopt::StructOpt;
@@ -32,8 +32,8 @@ struct Cli {
     update: Option<std::path::PathBuf>,
     
     /// Base directory for downloads
-    #[structopt(long, parse(from_os_str), default_value = ".")]
-    base_dir: PathBuf,
+    #[structopt(long, parse(from_os_str))]
+    base_dir: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -144,7 +144,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Token is always required
     let token = args.token.as_str();
-    let base_dir = args.base_dir.clone();
+    let base_dir = match args.base_dir {
+        Some(dir) => dir,
+        None => {
+            match env::var("COMFYUI_BASE_DIR") {
+                Ok(env_dir) => PathBuf::from(env_dir),
+                Err(_) => PathBuf::from(".")
+            }
+        }
+    };
+
+    println!("Using base directory: {}", base_dir.display());
+
 
     if let Some(metadata_path) = args.update {
         println!("Update flag detected. Processing metadata...");
