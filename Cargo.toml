@@ -1,5 +1,5 @@
 [package]
-name = "civitai-dl"
+name = "bcat-civitai"
 version = "0.1.0"
 edition = "2024"
 
