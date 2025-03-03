@@ -10,7 +10,7 @@ use indicatif::{ProgressBar,ProgressStyle};
 use chrono::Utc;
 use std::io::{self, Read, BufReader};
 use sha2::{Sha256, Digest};
-
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 struct Metadata {
@@ -30,7 +30,10 @@ struct Cli {
 
     #[structopt(long, parse(from_os_str))]
     update: Option<std::path::PathBuf>,
-
+    
+    /// Base directory for downloads
+    #[structopt(long, parse(from_os_str), default_value = ".")]
+    base_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -57,12 +60,91 @@ struct Model {
     modelVersions: Vec<ModelVersion>,
 }
 
+/// Parses the URN components for file organization
+struct UrnComponents {
+    ecosystem: String,
+    type_name: String,
+    source: String,
+    id: String,
+    version: String,
+    layer: Option<String>,
+    format: Option<String>,
+}
+
+impl UrnComponents {
+    fn from_urn(urn: &str) -> Result<Self, Box<dyn Error>> {
+        // Parse the URN: urn:air:{ecosystem}:{type}:{source}:{id}@{version?}:{layer?}.?{format?}
+        let parts: Vec<&str> = urn.split(':').collect();
+        if parts.len() < 6 {
+            return Err("Invalid URN format".into());
+        }
+        
+        let ecosystem = parts[2].to_string();
+        let type_name = parts[3].to_string();
+        let source = parts[4].to_string();
+        
+        let id_version_parts: Vec<&str> = if parts[5].contains('@') {
+            parts[5].split('@').collect()
+        } else {
+            return Err("Invalid URN format: missing version identifier".into());
+        };
+        
+        let id = id_version_parts[0].to_string();
+        let version = id_version_parts[1].to_string();
+        
+        // Optional layer and format
+        let layer = if parts.len() > 6 {
+            Some(parts[6].to_string())
+        } else {
+            None
+        };
+        
+        let format = if let Some(l) = &layer {
+            if l.contains('.') {
+                let format_parts: Vec<&str> = l.split('.').collect();
+                if format_parts.len() > 1 {
+                    Some(format_parts[1].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        Ok(UrnComponents {
+            ecosystem,
+            type_name,
+            source,
+            id,
+            version,
+            layer,
+            format,
+        })
+    }
+    
+    fn get_target_path(&self) -> PathBuf {
+        let mut path = PathBuf::new();
+        if self.ecosystem.contains("flux") && self.type_name.contains("checkpoint") {
+            // place flux in unet not checkpoints
+            path.push("unet")
+        } 
+        else {
+            path.push(format!("{}s", &self.type_name));
+        }
+        path
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::from_args();
 
     // Token is always required
     let token = args.token.as_str();
+    let base_dir = args.base_dir.clone();
 
     if let Some(metadata_path) = args.update {
         println!("Update flag detected. Processing metadata...");
@@ -72,8 +154,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Fetch model information for the URN from metadata
         let model_version = download_model_info(&metadata.urn).await?;
-        let target_file = check_and_update_file(&model_version, &metadata, token).await?;
-        println!("File is up-to-date: {:?}", target_file);
+        let target_file = check_and_update_file(&model_version, &metadata, token, &base_dir).await?;
+        println!("Files are up-to-date");
         return Ok(());
     }
 
@@ -97,36 +179,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file = &version.files[0];
     let download_url = &file.downloadUrl;
 
-    download_file(download_url, token, &urn, &file.name).await?;
+    download_file(download_url, token, &urn, &file.name, &base_dir).await?;
 
     Ok(())
 }
 
-async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, token: &str)
+async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, token: &str, base_dir: &PathBuf)
     -> Result<(), Box<dyn std::error::Error>> {
+    
+    // Parse the URN to get the target path
+    let urn_components = UrnComponents::from_urn(&metadata.urn)?;
+    let target_path = base_dir.join(urn_components.get_target_path());
+    
     for file in &model_version.files {
         // Check if the file exists locally and its hash matches
-        let file_path = Path::new(&file.name);
+        let file_path = target_path.join(&file.name);
+        
         if file_path.exists() {
-            let existing_sha256 = calculate_sha256(file_path)?;
+            let existing_sha256 = calculate_sha256(&file_path)?;
             println!("Existing SHA256: {}", existing_sha256.to_lowercase());
             println!("File SHA256: {}", file.hashes.SHA256.to_lowercase());
             if existing_sha256.to_lowercase() == file.hashes.SHA256.to_lowercase() {
-                println!("File {} is up to date.", file.name);
+                println!("File {} is up to date.", file_path.display());
                 continue;
             } else {
-                println!("File {} has a mismatching hash. Updating...", file.name);
+                println!("File {} has a mismatching hash. Updating...", file_path.display());
             }
         } else {
-            println!("File {} does not exist. Downloading...", file.name);
+            println!("File {} does not exist. Downloading...", file_path.display());
         }
 
         // Download and replace the file if necessary
-        download_file(&file.downloadUrl, token, &metadata.urn, &file.name).await.expect("TODO: panic message");
+        download_file(&file.downloadUrl, token, &metadata.urn, &file.name, base_dir).await?;
     }
 
     Ok(())
-
 }
 
 fn calculate_sha256(file_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
@@ -155,17 +242,15 @@ fn calculate_sha256(file_path: &Path) -> Result<String, Box<dyn std::error::Erro
 }
 
 fn read_metadata(path: &Path) -> Result<Metadata, Box<dyn Error>> {
-    let file_content = fs::read_to_string(path);
-    let metadata: Metadata = serde_json::from_str(&file_content.unwrap().to_string())?;
+    let file_content = fs::read_to_string(path)?;
+    let metadata: Metadata = serde_json::from_str(&file_content)?;
     Ok(metadata)
 }
-
-
 
 async fn download_model_info(urn: &str) -> Result<ModelVersion, Box<dyn Error>> {
     // Parse the provided URN
     let urn_parts: Vec<&str> = urn.split(':').collect();
-    if urn_parts.len() != 6 || !urn.contains('@') {
+    if urn_parts.len() < 6 || !urn.contains('@') {
         return Err("Invalid URN format".into());
     }
     let model_type = urn_parts[2];
@@ -201,9 +286,21 @@ async fn download_model_info(urn: &str) -> Result<ModelVersion, Box<dyn Error>> 
     Ok(version)
 }
 
-async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &str) -> Result<(), Box<dyn Error>> {
-
+async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &str, base_dir: &PathBuf) -> Result<(), Box<dyn Error>> {
     println!("Downloading file from: {}", download_url);
+    
+    // Parse the URN to get the target path
+    let urn_components = UrnComponents::from_urn(urn)?;
+    let target_path = base_dir.join(urn_components.get_target_path());
+    
+    // Create target directory if it doesn't exist
+    fs::create_dir_all(&target_path)?;
+    
+    let file_path = target_path.join(file_name);
+    let metadata_path = target_path.join(format!("{}.metadata.json", file_name));
+    
+    println!("Target file path: {}", file_path.display());
+
     let client = reqwest::Client::new();
 
     // Download the file
@@ -214,24 +311,22 @@ async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &s
     let mut response = client.get(download_url).headers(headers).send().await?;
     if !response.status().is_success() {
         eprintln!("Failed to download file: {}", response.status());
-        return Ok(());
+        return Err(format!("Failed to download file: {}", response.status()).into());
     }
-
 
     let total_size = response
         .content_length()
         .ok_or("Failed to fetch content length")?;
 
-
     let pb = ProgressBar::new(total_size);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap().progress_chars("=>-"),
+            .unwrap()
+            .progress_chars("=>-"),
     );
 
-
-    let mut downloaded_file = File::create(file_name)?;
+    let mut downloaded_file = File::create(&file_path)?;
     let mut downloaded_data = 0u64;
 
     while let Some(chunk) = response.chunk().await? {
@@ -243,19 +338,17 @@ async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &s
     pb.finish_with_message("Download complete!");
 
     let metadata = Metadata {
-        urn: urn.parse().unwrap(),
+        urn: urn.to_string(),
         datetime: Utc::now().to_rfc3339(), // Get ISO8601 string as timestamp
     };
 
     let metadata_json = serde_json::to_string_pretty(&metadata)?;
 
-    // Create metadata file name
-    let metadata_file_name = format!("{}.metadata.json", file_name);
+    // Write metadata file
+    std::fs::write(&metadata_path, metadata_json)?;
 
-    std::fs::write(&metadata_file_name, metadata_json)?;
+    println!("Metadata saved as: {}", metadata_path.display());
+    println!("Model downloaded as: {}", file_path.display());
 
-    println!("Metadata saved as: {}", metadata_file_name);
-    println!("Model downloaded as: {}", file_name);
-
-    return Ok(());
+    Ok(())
 }
