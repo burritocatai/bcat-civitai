@@ -22,13 +22,13 @@ A simple Rust application for downloading and updating AI models from [CivitAI](
 
 ```bash
 # Clone the repository
-git clone https://github.com/burritocatai/civitai-dl.git
+git clone https://github.com/burritocatai/bcat-civitai.git
 cd civitai-dl
 
 # Build the application
 cargo build --release
 
-# The binary will be available at target/release/civitai-dl
+# The binary will be available at target/release/bcat-civitai
 ```
 
 ## Usage
