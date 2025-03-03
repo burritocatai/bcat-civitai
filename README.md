@@ -1,4 +1,4 @@
-# CivitAIDownloader
+# bcat-civitai
 
 A simple Rust application for downloading and updating AI models from [CivitAI](https://civitai.com/).
 
@@ -36,13 +36,13 @@ cargo build --release
 ### Downloading a model
 
 ```bash
-civitai-downloader --urn civitai:model:checkpoint:12345@67890 --token YOUR_CIVITAI_TOKEN
+bcat-civitai --urn urn:air:flux1:lora:civitai:1075055@1206817 --base_dir /comfyui/ComfyUI/models --token YOUR_CIVITAI_TOKEN
 ```
 
 ### Updating an existing model
 
 ```bash
-civitai-downloader --token YOUR_CIVITAI_TOKEN --update path/to/model.safetensors.metadata.json
+bcat-civitai --token YOUR_CIVITAI_TOKEN --update path/to/model.safetensors.metadata.json
 ```
 
 ### Command-line options
@@ -51,18 +51,19 @@ civitai-downloader --token YOUR_CIVITAI_TOKEN --update path/to/model.safetensors
 |--------|-------------|
 | `-u, --urn` | The URN to the model (e.g., `civitai:model:checkpoint:12345@67890`) |
 | `-t, --token` | Your CivitAI bearer token for authentication |
+| `-b, --base-dir` | Base directory for storing downloaded models, your ComfyUI directory is recommended |
 | `--update` | Path to a metadata file for updating an existing model |
 
 ## URN Format
 
 The application expects URNs in the following format:
+
 ```
-civitai:model:<type>:<model_id>@<version_id>
+urn:air:{ecosystem}:{type}:{source}:{id}@{version?}:{layer?}.?{format?}
 ```
 
 Examples:
-- `civitai:model:checkpoint:12345@67890`
-- `civitai:model:lora:54321@98765`
+- `urn:air:flux1:lora:civitai:1075055@1206817`
 
 ## Metadata
 
@@ -70,7 +71,7 @@ When downloading a model, the application creates a metadata JSON file with the 
 
 ```json
 {
-  "urn": "civitai:model:checkpoint:12345@67890",
+  "urn": "urn:air:flux1:lora:civitai:1075055@1206817",
   "datetime": "2023-07-01T12:34:56.789Z"
 }
 ```
