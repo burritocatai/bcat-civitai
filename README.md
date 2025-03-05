@@ -45,11 +45,18 @@ bcat-civitai --urn urn:air:flux1:lora:civitai:1075055@1206817 --base_dir /comfyu
 bcat-civitai --token YOUR_CIVITAI_TOKEN --update path/to/model.safetensors.metadata.json
 ```
 
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CIVITAI_API_TOKEN` | Your CivitAI bearer token for authentication |
+| `COMFYUI_BASE_DIR` | Base directory for storing downloaded models, your ComfyUI directory is recommended |
+
 ### Command-line options
 
 | Option | Description |
 |--------|-------------|
-| `-u, --urn` | The URN to the model (e.g., `civitai:model:checkpoint:12345@67890`) |
+| `-u, --urn` | The URN to the model (e.g., `urn:air:flux1:lora:civitai:1075055@1206817`) |
 | `-t, --token` | Your CivitAI bearer token for authentication |
 | `-b, --base-dir` | Base directory for storing downloaded models, your ComfyUI directory is recommended |
 | `--update` | Path to a metadata file for updating an existing model |
