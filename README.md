@@ -23,7 +23,7 @@ A simple Rust application for downloading and updating AI models from [CivitAI](
 ```bash
 # Clone the repository
 git clone https://github.com/burritocatai/bcat-civitai.git
-cd civitai-dl
+cd bcat-civitai
 
 # Build the application
 cargo build --release
