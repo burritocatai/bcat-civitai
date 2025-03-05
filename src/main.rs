@@ -34,6 +34,10 @@ struct Cli {
     /// Base directory for downloads
     #[structopt(long, parse(from_os_str))]
     base_dir: Option<PathBuf>,
+
+    /// Use ComfyUI directory structure
+    #[structopt(long)]
+    comfyui: bool,
 }
 
 #[derive(Deserialize)]
@@ -125,7 +129,13 @@ impl UrnComponents {
         })
     }
     
-    fn get_target_path(&self) -> PathBuf {
+    fn get_target_path(&self, is_comfyui: bool) -> PathBuf {
+        if !is_comfyui {
+            // If not using ComfyUI structure, just return an empty path
+            // which will place files directly in the base_dir
+            return PathBuf::new();
+        }
+
         let mut path = PathBuf::new();
         if self.ecosystem.contains("flux") && self.type_name.contains("checkpoint") {
             // place flux in unet not checkpoints
@@ -166,6 +176,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
+    // Determine if ComfyUI structure should be used
+    let use_comfyui = args.comfyui || env::var("COMFYUI_BASE_DIR").is_ok();
+
+
     println!("Using base directory: {}", base_dir.display());
 
 
@@ -177,7 +191,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Fetch model information for the URN from metadata
         let model_version = download_model_info(&metadata.urn).await?;
-        let target_file = check_and_update_file(&model_version, &metadata, &token, &base_dir).await?;
+        let target_file = check_and_update_file(&model_version, &metadata, &token, &base_dir, use_comfyui).await?;
         println!("Files are up-to-date");
         return Ok(());
     }
@@ -202,17 +216,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file = &version.files[0];
     let download_url = &file.downloadUrl;
 
-    download_file(download_url, &token, &urn, &file.name, &base_dir).await?;
+    download_file(download_url, &token, &urn, &file.name, &base_dir, use_comfyui).await?;
 
     Ok(())
 }
 
-async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, token: &str, base_dir: &PathBuf)
+async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, 
+    token: &str, base_dir: &PathBuf, use_comfyui: bool)
     -> Result<(), Box<dyn std::error::Error>> {
     
     // Parse the URN to get the target path
     let urn_components = UrnComponents::from_urn(&metadata.urn)?;
-    let target_path = base_dir.join(urn_components.get_target_path());
+    let target_path = base_dir.join(urn_components.get_target_path(use_comfyui));
     
     for file in &model_version.files {
         // Check if the file exists locally and its hash matches
@@ -233,7 +248,7 @@ async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata
         }
 
         // Download and replace the file if necessary
-        download_file(&file.downloadUrl, token, &metadata.urn, &file.name, base_dir).await?;
+        download_file(&file.downloadUrl, token, &metadata.urn, &file.name, base_dir, use_comfyui).await?;
     }
 
     Ok(())
@@ -309,12 +324,14 @@ async fn download_model_info(urn: &str) -> Result<ModelVersion, Box<dyn Error>> 
     Ok(version)
 }
 
-async fn download_file(download_url: &str, token: &str, urn: &str, file_name: &str, base_dir: &PathBuf) -> Result<(), Box<dyn Error>> {
+async fn download_file(download_url: &str, token: &str, urn: &str, 
+    file_name: &str, base_dir: &PathBuf, use_comfyui: bool)
+    -> Result<(), Box<dyn Error>> {
     println!("Downloading file from: {}", download_url);
     
     // Parse the URN to get the target path
     let urn_components = UrnComponents::from_urn(urn)?;
-    let target_path = base_dir.join(urn_components.get_target_path());
+    let target_path = base_dir.join(urn_components.get_target_path(use_comfyui));
     
     // Create target directory if it doesn't exist
     fs::create_dir_all(&target_path)?;
