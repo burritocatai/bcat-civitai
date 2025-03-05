@@ -25,12 +25,12 @@ struct Cli {
     urn: Option<String>,
 
     /// The Bearer token for authentication
-    #[structopt(short, long)]
-    token: String,
+    #[structopt(long)]
+    token: Option<String>,
 
     #[structopt(long, parse(from_os_str))]
     update: Option<std::path::PathBuf>,
-    
+
     /// Base directory for downloads
     #[structopt(long, parse(from_os_str))]
     base_dir: Option<PathBuf>,
@@ -143,7 +143,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::from_args();
 
     // Token is always required
-    let token = args.token.as_str();
+    let token = match args.token {
+        Some(token_str) => token_str.to_string(),
+        None => {
+            match env::var("CIVITAI_API_TOKEN") {
+                Ok(env_token) => env_token,
+                Err(_) => {
+                    eprintln!("Error: No authentication token provided.");
+                    return Err("Missing required token parameter".into());
+                }
+            }
+        }
+    };
+
     let base_dir = match args.base_dir {
         Some(dir) => dir,
         None => {
@@ -165,7 +177,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         // Fetch model information for the URN from metadata
         let model_version = download_model_info(&metadata.urn).await?;
-        let target_file = check_and_update_file(&model_version, &metadata, token, &base_dir).await?;
+        let target_file = check_and_update_file(&model_version, &metadata, &token, &base_dir).await?;
         println!("Files are up-to-date");
         return Ok(());
     }
@@ -190,7 +202,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file = &version.files[0];
     let download_url = &file.downloadUrl;
 
-    download_file(download_url, token, &urn, &file.name, &base_dir).await?;
+    download_file(download_url, &token, &urn, &file.name, &base_dir).await?;
 
     Ok(())
 }
