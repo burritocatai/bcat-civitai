@@ -185,14 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if let Some(metadata_path) = args.update {
         println!("Update flag detected. Processing metadata...");
-
-        let metadata: Metadata = read_metadata(&metadata_path)?;
-        println!("Metadata URN: {}", metadata.urn);
-
-        // Fetch model information for the URN from metadata
-        let model_version = download_model_info(&metadata.urn).await?;
-        let target_file = check_and_update_file(&model_version, &metadata, &token, &base_dir, use_comfyui).await?;
-        println!("Files are up-to-date");
+        check_metadata_and_update(&metadata_path, &token, &base_dir, use_comfyui).await?;
         return Ok(());
     }
 
@@ -216,9 +209,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file = &version.files[0];
     let download_url = &file.downloadUrl;
 
-    download_file(download_url, &token, &urn, &file.name, &base_dir, use_comfyui).await?;
+    
+    let urn_components = UrnComponents::from_urn(&urn)?;
+    let target_path = base_dir.join(urn_components.get_target_path(use_comfyui));
+    let metadata_filepath = target_path.join(format!("{}.metadata.json", file.name));
 
+    if metadata_filepath.exists() {
+        println!("File already exists: {}", file.name);
+        // Read the existing metadata
+        let metadata = read_metadata(&metadata_filepath)?;
+        // run update
+        let model_version = download_model_info(&urn).await?;
+        check_and_update_file(&model_version, &metadata, &token, &base_dir, use_comfyui).await?;
+    } else {
+        download_file(download_url, &token, &urn, &file.name, &base_dir, use_comfyui).await?;
+    }
+    
     Ok(())
+}
+
+
+async fn check_metadata_and_update(metadata_path: &PathBuf, token: &str, base_dir: &PathBuf, use_comfyui: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let metadata: Metadata = read_metadata(&metadata_path)?;
+    println!("Metadata URN: {}", metadata.urn);
+
+    // Fetch model information for the URN from metadata
+    let model_version = download_model_info(&metadata.urn).await?;
+    check_and_update_file(&model_version, &metadata, &token, &base_dir, use_comfyui).await?;
+    println!("Files are up-to-date");
+
+    return Ok(())
 }
 
 async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata, 
@@ -229,7 +249,14 @@ async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata
     let urn_components = UrnComponents::from_urn(&metadata.urn)?;
     let target_path = base_dir.join(urn_components.get_target_path(use_comfyui));
     
+  
+
     for file in &model_version.files {
+
+        if urn_components.version != model_version.id.to_string() {
+            println!("File {} is not the right version. Skipping...", file.name);
+            continue;
+        }
         // Check if the file exists locally and its hash matches
         let file_path = target_path.join(&file.name);
         
