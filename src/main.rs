@@ -51,11 +51,17 @@ struct ModelFile {
     name: String,
     downloadUrl: String,
     hashes: ModelHashes,
+    metadata: FileMetadata,
 }
 
 #[derive(Deserialize)]
 struct ModelHashes {
     SHA256: String,
+}
+
+#[derive(Deserialize)]
+struct FileMetadata {
+    format: String,
 }
 
 #[derive(Deserialize)]
@@ -206,7 +212,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let file = &version.files[0];
+    // Use iter() instead of into_iter() to avoid consuming the collection
+    let file = version.files.iter()
+        .find(|v| v.metadata.format.to_lowercase() == "safetensor")
+        .ok_or("Safetensor format file not found")?;
     let download_url = &file.downloadUrl;
 
     
@@ -257,6 +266,12 @@ async fn check_and_update_file(model_version: &ModelVersion, metadata: &Metadata
             println!("File {} is not the right version. Skipping...", file.name);
             continue;
         }
+
+        if file.metadata.format.to_lowercase() != "safetensor" {
+            println!("File {} is not in safetensor format. Skipping...", file.name);
+            continue;
+        }
+        
         // Check if the file exists locally and its hash matches
         let file_path = target_path.join(&file.name);
         
