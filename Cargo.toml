@@ -1,7 +1,15 @@
 [package]
 name = "bcat-civitai"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
+license = "mit"
+description = "downloads models from civitai"
+authors = ["bcat"]
+keywords = ["civitai", "download", "model", "ai", "artificial intelligence"]
+homepage = "https://github.com/burritocatai/bcat-civitai"
+repository = "https://github.com/burritocatai/bcat-civitai"
+readme = "README.md"
+
 
 [dependencies]
 reqwest = { version = "0.12.12", features = ["json"] }
